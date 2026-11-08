@@ -1,0 +1,23 @@
+# Read-only: this repo's only job is to keep the pins honest. Publishing happens
+# in build-image.yml, which alone is granted the GHCR write permission.
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pins:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: 3.13.4
+      - run: dart pub get
+      - run: dart analyze tool/
+      - run: dart run tool/check_image_build.dart
