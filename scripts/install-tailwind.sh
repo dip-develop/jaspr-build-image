@@ -48,9 +48,12 @@ command -v curl >/dev/null || {
   exit 1
 }
 
-# --retry covers the intermittent 5xx behind issue #250; the sha256 check below
-# still fails hard on a truncated body, so a retry cannot hide a real break.
-curl -fsSL --retry 2 --retry-delay 5 \
+# --retry covers the intermittent 5xx behind issue #250; --retry-all-errors also
+# retries a mid-body reset (curl exit 18), which plain --retry does not, so one
+# flaky transfer is not turned into a hard build failure by the sha256 guard
+# below. That guard still fails hard on a truncated body, so a retry cannot hide
+# a real break.
+curl -fsSL --retry 2 --retry-delay 5 --retry-all-errors \
   -H "Accept: application/octet-stream" \
   "https://api.github.com/repos/tailwindlabs/tailwindcss/releases/assets/${asset}" \
   -o /tmp/tailwindcss

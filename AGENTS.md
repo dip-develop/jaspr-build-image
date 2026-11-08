@@ -43,9 +43,24 @@ and nothing else. It must never gain `pull_request`, `environment:`, deploy
 secrets, or an SSH/scp step. `.github/workflows/ci.yml` stays read-only with no
 `secrets.` reference at all.
 
-`tool/check_image_build.dart` fails the build if either workflow drifts. Do not
-weaken the checker to make a red run green — fix the workflow or the file it
-names.
+`tool/check_image_build.dart` fails CI when the pins drift. It asserts, and
+these lists are closed:
+
+- the `FROM` lines, the `# image:` comments, the workflow `env:`/`tags:` copies,
+  both installer version tables (each architecture's asset id and digest parsed
+  from its own branch) and `ci.yml`'s `sdk:` line, all byte-for-byte against the
+  `const` block;
+- the two Dockerfiles are byte-identical from their
+  `# ---- end of flavour-specific setup ----` marker down;
+- `build-image.yml`'s job keys are exactly `dart-image` then `flutter-image`,
+  each with both platforms and its own cache scope;
+- its `permissions:` block grants only `contents: read` and `packages: write`,
+  and `GITHUB_TOKEN` is its only secret;
+- `ci.yml` has exactly one job, triggers on `pull_request`, and holds no write
+  scope and no secret.
+
+Do not weaken the checker to make a red run green — fix the workflow or the file
+it names.
 
 ## English
 

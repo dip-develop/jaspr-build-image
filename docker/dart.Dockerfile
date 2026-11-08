@@ -12,6 +12,17 @@
 # `dart run tool/check_image_build.dart`.
 FROM dart:3.13.4
 
+# Flavour-specific setup: everything above the marker may differ between the
+# two Dockerfiles; everything from the marker down must stay byte-identical.
+#
+# The official `dart:` image already puts /root/.pub-cache/bin on PATH, so this
+# line is a harmless duplicate here; it is load-bearing in the flutter flavour,
+# which has to put its own SDK first. Keeping it in both keeps the intent
+# visible and the region symmetric.
+ENV PATH="/root/.pub-cache/bin:${PATH}"
+
+# ---- end of flavour-specific setup ----
+
 # Deliberately no defaults: a bare `docker build` must fail rather than silently
 # produce an unpinned toolchain (the exact drift this repo removes elsewhere).
 ARG JASPR_CLI_VERSION
@@ -19,9 +30,6 @@ ARG TW_VERSION
 ARG TARGETARCH
 
 RUN dart pub global activate jaspr_cli "${JASPR_CLI_VERSION}"
-# The official dart image already exposes the pub cache bin dir; setting it here
-# keeps both flavours byte-identical and makes `jaspr build` work in each.
-ENV PATH="/root/.pub-cache/bin:${PATH}"
 
 COPY scripts/install-tailwind.sh /usr/local/bin/install-tailwind.sh
 RUN bash /usr/local/bin/install-tailwind.sh "${TW_VERSION}" "${TARGETARCH}"
