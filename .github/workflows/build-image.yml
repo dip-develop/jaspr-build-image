@@ -1,0 +1,85 @@
+# Publishes the pinned Jaspr toolchain images. This workflow only builds and
+# pushes a public package: no deploy host, no environment, no PR trigger.
+name: build-image
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'docker/**'
+      - 'scripts/**'
+      - '.github/workflows/build-image.yml'
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  JASPR_CLI_VERSION: 0.23.5
+  TW_VERSION: 4.3.0
+  FLUTTER_VERSION: 3.44.9
+
+jobs:
+  dart-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/dart.Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          # Keeps the OCI index to exactly the two platform manifests, so the
+          # operator's `imagetools inspect` check is unambiguous; the cost is no
+          # SLSA attestation.
+          provenance: false
+          # Per-job cache scope: two concurrent exporters sharing one scope fight
+          # over the same index and the 10 GB cap.
+          cache-from: type=gha,scope=dart
+          cache-to: type=gha,mode=max,scope=dart
+          build-args: |
+            JASPR_CLI_VERSION=${{ env.JASPR_CLI_VERSION }}
+            TW_VERSION=${{ env.TW_VERSION }}
+          tags: ghcr.io/dip-develop/jaspr-build-image:dart-3.13.4-jaspr-0.23.5-tailwind-4.3.0
+
+  flutter-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # No setup-qemu: this job publishes linux/amd64 on an amd64 runner, so
+      # nothing is emulated. Only dart-image cross-builds arm64.
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/flutter.Dockerfile
+          push: true
+          # amd64 only: Flutter publishes no linux-arm64 archive, so an arm64
+          # variant would carry an x64 SDK that cannot execute on the base.
+          platforms: linux/amd64
+          # Keeps the OCI index to exactly the published platform manifests, so
+          # the operator's `imagetools inspect` check is unambiguous; the cost is
+          # no SLSA attestation.
+          provenance: false
+          # Per-job cache scope: see the dart-image job.
+          cache-from: type=gha,scope=flutter
+          cache-to: type=gha,mode=max,scope=flutter
+          build-args: |
+            JASPR_CLI_VERSION=${{ env.JASPR_CLI_VERSION }}
+            TW_VERSION=${{ env.TW_VERSION }}
+            FLUTTER_VERSION=${{ env.FLUTTER_VERSION }}
+          tags: ghcr.io/dip-develop/jaspr-build-image:flutter-3.44.9-jaspr-0.23.5-tailwind-4.3.0

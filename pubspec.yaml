@@ -1,0 +1,9 @@
+name: jaspr_build_image
+description: >-
+  Pin authority and CI checks for the public Jaspr toolchain base images
+  published to GHCR. There is no Dart application here; this package exists so
+  that `dart run tool/...` and `dart analyze` resolve from the repo root.
+version: 0.1.0
+publish_to: none
+environment:
+  sdk: ^3.13.0
