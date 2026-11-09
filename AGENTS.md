@@ -81,6 +81,12 @@ these lists are closed:
 Do not weaken the checker to make a red run green — fix the workflow or the file
 it names.
 
+## License
+
+This repository is MIT (`LICENSE`). The third-party SDKs inside the published
+images — Dart and Flutter (BSD-3-Clause), the Tailwind CSS CLI (MIT) — keep
+their own licences; the MIT grant here covers this repository's own files only.
+
 ## English
 
 Comments, docs and commit messages are in English.

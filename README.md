@@ -238,3 +238,13 @@ repo's tags is spelled out in [Why the Flutter tag is amd64-only](#why-the-flutt
 - `tool/` — `check_image_build.dart`, the pin checker.
 - `.github/workflows/` — `build-image.yml` publishes; `ci.yml` runs the checker
   read-only.
+
+## License
+
+MIT — see [LICENSE](LICENSE). The Dockerfiles, the scripts, the checker and the
+workflow in this repository are covered by it.
+
+The published images bundle third-party SDKs that keep their own licences: the
+Dart SDK and the Flutter SDK are BSD-3-Clause, and the Tailwind CSS standalone
+CLI is MIT. This repository's MIT grant covers its own files; it does not
+relicense those bundled SDKs.

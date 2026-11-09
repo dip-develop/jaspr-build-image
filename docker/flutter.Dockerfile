@@ -54,4 +54,5 @@ RUN bash /usr/local/bin/install-tailwind.sh "${TW_VERSION}" "${TARGETARCH}"
 RUN test -x /root/.pub-cache/bin/jaspr && tailwindcss --help >/dev/null
 
 LABEL org.opencontainers.image.title="jaspr-build-image" \
-      org.opencontainers.image.description="Pinned Jaspr toolchain: Dart or Flutter SDK + jaspr_cli + Tailwind CSS CLI v4"
+      org.opencontainers.image.description="Pinned Jaspr toolchain: Dart or Flutter SDK + jaspr_cli + Tailwind CSS CLI v4" \
+      org.opencontainers.image.licenses="MIT"
