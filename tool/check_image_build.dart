@@ -2,9 +2,8 @@
 /// image, the Dockerfiles that build it and the installers that feed them must
 /// agree on every pin before a tag goes to GHCR.
 ///
-/// **The `const` block below is the only place a pin is *chosen*.** Every other
-/// occurrence of a pin value is a *copy*, and this checker asserts each copy
-/// byte-for-byte. The copies are:
+/// **The `const` block below is the only place a pin is *chosen*.** Every copy
+/// of a pin that this checker owns is asserted byte-for-byte. Those copies are:
 ///
 /// - the `# image:` comment at the top of each Dockerfile (the derived tag);
 /// - the `FROM` line of each Dockerfile — `dart:<dartPin>` for the Dart flavour,
@@ -18,7 +17,9 @@
 ///   `scripts/install-flutter.sh`;
 /// - the `sdk:` line of `.github/workflows/ci.yml`.
 ///
-/// Nothing outside that list may hold a pin value.
+/// `README.md` also spells every pin out, but it is documentation, not an
+/// assertion target: it is written for humans and may hold the full tags in
+/// prose without this file checking them.
 ///
 /// The two flavours exist for a real dependency reason and must stay separate
 /// images, so the strongest structural check here is that everything from the
@@ -26,11 +27,15 @@
 /// both Dockerfiles: the shared tail cannot drift apart. Only the region above
 /// the marker is flavour-specific.
 ///
-/// The workflow is checked per job, not per file: platforms, tags, cache scope
-/// and the Flutter build arg live inside a job segment, so a change to one job
-/// cannot be masked by the other job's copy of the same line. The job set, the
-/// `permissions:` block and the `secrets.` allowlist are closed lists: a new
-/// job, a new permission or a second secret fails.
+/// The workflow is checked per job, not per file: platforms, tags, the
+/// `file:`, `push:`, `provenance:` and login fields, the cache scope and the
+/// build args all live inside a job segment, so a change to one job cannot be
+/// masked by the other job's copy of the same line. The expected platforms are
+/// per flavour, because the Flutter flavour publishes `linux/amd64` only: Flutter
+/// ships no `linux-arm64` archive, so an arm64 variant would be an arm64 base
+/// carrying an x64 SDK. The job set, the publish trigger, the `permissions:`
+/// block and the `secrets.` allowlist are closed lists: a new job, a widened
+/// trigger, a new permission or a second secret fails.
 ///
 /// Pin hygiene, not a release gate: it reports drift and exits non-zero so CI
 /// shows it; nothing is measured against a threshold.
@@ -95,6 +100,34 @@ const Map<String, List<String>> _flavourBareArgs = <String, List<String>>{
 
 /// The exact jobs `build-image.yml` may have, in order.
 const List<String> _buildJobs = <String>['dart-image', 'flutter-image'];
+
+/// The platforms each job must publish. The Dart flavour is multi-arch; the
+/// Flutter flavour is amd64 only, because Flutter publishes no `linux-arm64`
+/// archive: an arm64 variant would be an arm64 base carrying an x64 SDK whose
+/// `dart` needs `/lib64/ld-linux-x86-64.so.2`, which that base does not have.
+/// No tag name encodes the architecture, so both tags stay as they are.
+const Map<String, String> _expectedPlatforms = <String, String>{
+  'dart-image': 'linux/amd64,linux/arm64',
+  'flutter-image': 'linux/amd64',
+};
+
+/// The Dockerfile each job must build. A swap publishes the Dart toolchain under
+/// the Flutter tag (or the reverse) with a green check.
+const Map<String, String> _expectedDockerfile = <String, String>{
+  'dart-image': dartDockerfilePath,
+  'flutter-image': flutterDockerfilePath,
+};
+
+/// Build args every job must pass, from the workflow `env:` block.
+const List<String> _sharedBuildArgs = <String>[
+  'JASPR_CLI_VERSION',
+  'TW_VERSION',
+];
+
+/// Build args only the named job may pass.
+const Map<String, List<String>> _jobBuildArgs = <String, List<String>>{
+  'flutter-image': <String>['FLUTTER_VERSION'],
+};
 
 /// The only permissions `build-image.yml` may grant.
 const Map<String, String> _allowedPermissions = <String, String>{
@@ -238,9 +271,27 @@ void main() {
         );
       }
     }
+    // The other flavour must not declare it: nothing passes that arg there, so
+    // it would be a pin-shaped hole in a Dockerfile that cannot consume it.
+    for (final other in dockerfiles.keys) {
+      if (other == entry.key) {
+        continue;
+      }
+      for (final arg in entry.value) {
+        if (RegExp('^$arg\$', multiLine: true).hasMatch(dockerfiles[other]!)) {
+          findings.add(
+            '$other: declares `$arg` — only ${entry.key} consumes it; nothing '
+            'passes that build arg to the other flavour',
+          );
+        }
+      }
+    }
   }
 
   // Shared-tail equality: everything from the flavour marker down is identical.
+  // This is a file-vs-file equality with a known, accepted limit: deleting the
+  // same line from both tails keeps them equal and passes. It catches drift
+  // between the two flavours; the per-pin assertions above are what catch a pin.
   final dartTail = _sharedTail(dartDockerfile);
   final flutterTail = _sharedTail(flutterDockerfile);
   if (dartTail == null) {
@@ -326,16 +377,24 @@ void main() {
     'archive=$flutterArchive',
     'sha=$flutterArchiveSha256',
     'sha256sum -c',
-    'xz-utils',
+    // The full apt line, not the bare package name: `xz-utils` also appears in
+    // this file's comments, so a `contains` on the name passed after the
+    // install line was deleted.
+    'apt-get install -y --no-install-recommends xz-utils',
     "git config --global --add safe.directory '*'",
     'dart --version',
+    // All provenance rests on this host: Google's own release bucket. Any other
+    // URL would download a body whose sha256 pin no longer proves the origin.
+    r'"https://storage.googleapis.com/flutter_infra_release/releases/${archive}"',
   ], change: 'keep it in the Flutter installer');
   _expectMatch(
     findings,
     flutterInstallerPath,
     flutterInstaller,
-    RegExp(r'^flutter .*--version ', multiLine: true),
-    change: 'the installer must smoke-check `flutter --version`',
+    RegExp(r'^flutter --no-version-check --version ', multiLine: true),
+    change:
+        'the smoke check must pass `--no-version-check`, or it performs a real '
+        'update check during the image build',
   );
 
   // ── build-image.yml ───────────────────────────────────────────────────────
@@ -357,12 +416,102 @@ void main() {
       continue;
     }
     final label = 'the `$job:` job';
-    if (!segment.contains('platforms: linux/amd64,linux/arm64')) {
+
+    // Platforms are asserted as a whole line, not a substring: `linux/amd64` is
+    // a prefix of `linux/amd64,linux/arm64`, so `contains` would accept the
+    // two-platform line where the one-platform line is expected.
+    final platforms = RegExp(
+      r'^\s*platforms:[ \t]*(.*)$',
+      multiLine: true,
+    ).allMatches(segment).map((match) => match.group(1)!.trim()).toList();
+    final expectedPlatforms = _expectedPlatforms[job]!;
+    if (platforms.length != 1 || platforms.single != expectedPlatforms) {
       findings.add(
-        '$buildWorkflowPath: $label does not publish both platforms — its '
-        '`platforms:` line must read `linux/amd64,linux/arm64`',
+        '$buildWorkflowPath: $label publishes [${platforms.join(' | ')}] — its '
+        '`platforms:` line must read `$expectedPlatforms`',
       );
     }
+
+    // The publish-critical fields, each as its own line inside this job so the
+    // sibling job's copy cannot satisfy it.
+    final dockerfile = _expectedDockerfile[job]!;
+    _expectJobLine(
+      findings,
+      label,
+      segment,
+      'file: $dockerfile',
+      change: 'this job would build the wrong flavour',
+    );
+    _expectJobLine(
+      findings,
+      label,
+      segment,
+      'push: true',
+      change: 'the run would go green with nothing published',
+    );
+    _expectJobLine(
+      findings,
+      label,
+      segment,
+      'provenance: false',
+      change:
+          'the OCI index gains attestation manifests and the platform check '
+          'stops being unambiguous',
+    );
+    for (final field in <String>[
+      'registry: ghcr.io',
+      'username: \${{ github.actor }}',
+      'password: \${{ secrets.$_onlySecret }}',
+    ]) {
+      _expectJobLine(
+        findings,
+        label,
+        segment,
+        field,
+        change: 'the GHCR login is missing from this job',
+      );
+    }
+
+    // Build args, per job: the shared pair from the `env:` block in both jobs,
+    // `FLUTTER_VERSION` only where a Flutter SDK is installed.
+    for (final name in _sharedBuildArgs) {
+      _expectJobLine(
+        findings,
+        label,
+        segment,
+        '$name=\${{ env.$name }}',
+        change:
+            'the build arg must be passed from the `env:` block in both jobs',
+      );
+    }
+    for (final entry in _jobBuildArgs.entries) {
+      for (final name in entry.value) {
+        if (entry.key == job) {
+          _expectJobLine(
+            findings,
+            label,
+            segment,
+            '$name=\${{ env.$name }}',
+            change: 'the build arg must be passed from the `env:` block',
+          );
+        } else if (segment.contains(name)) {
+          findings.add(
+            '$buildWorkflowPath: $label passes `$name` — only the '
+            '`${entry.key}:` job may, and nothing installs that toolchain here',
+          );
+        }
+      }
+    }
+
+    for (final other in _expectedDockerfile.values) {
+      if (other != dockerfile && segment.contains(other)) {
+        findings.add(
+          '$buildWorkflowPath: $label mentions `$other` — a `file:` swap '
+          'publishes the other flavour under this job\'s tag',
+        );
+      }
+    }
+
     if (!segment.contains('cache-from: type=gha,scope=${_cacheScope(job)}')) {
       findings.add(
         '$buildWorkflowPath: $label does not read the '
@@ -395,12 +544,6 @@ void main() {
         'two tags are swapped between the jobs',
       );
     }
-    if (dartJob.contains('FLUTTER_VERSION')) {
-      findings.add(
-        '$buildWorkflowPath: the `dart-image:` job passes `FLUTTER_VERSION` — '
-        'only the flutter flavour installs a Flutter SDK',
-      );
-    }
   }
   if (flutterJob != null) {
     if (!flutterJob.contains(flutterImage)) {
@@ -415,22 +558,26 @@ void main() {
         'two tags are swapped between the jobs',
       );
     }
-    if (!flutterJob.contains('FLUTTER_VERSION=\${{ env.FLUTTER_VERSION }}')) {
-      findings.add(
-        '$buildWorkflowPath: the `flutter-image:` job does not pass '
-        '`FLUTTER_VERSION` — the Flutter installer would refuse the build, and '
-        'the version must come from the `env:` block',
-      );
-    }
+  }
+
+  // The publish trigger is closed: only `main` may publish these tags. A glob
+  // here would let any branch write the public tags.
+  final branchLines = RegExp(
+    r'^\s*branches:[ \t]*(.*)$',
+    multiLine: true,
+  ).allMatches(buildWorkflow).map((match) => match.group(1)!.trim()).toList();
+  if (branchLines.length != 1 || branchLines.single != '[main]') {
+    findings.add(
+      '$buildWorkflowPath: the `on.push` branches are '
+      '[${branchLines.join(' | ')}] — it must be exactly `branches: [main]`, '
+      'or any other branch could publish the public tags',
+    );
   }
 
   _expectPresent(findings, buildWorkflowPath, buildWorkflow, <String>[
     'JASPR_CLI_VERSION: $jasprCliPin',
     'TW_VERSION: $tailwindPin',
     'FLUTTER_VERSION: $flutterPin',
-    'registry: ghcr.io',
-    'username: \${{ github.actor }}',
-    'password: \${{ secrets.$_onlySecret }}',
   ], change: 'keep it in $buildWorkflowPath at the level named above');
 
   // Closed secret allowlist: exactly one secret, no more, no less.
@@ -510,6 +657,7 @@ void main() {
   for (final token in <String>[
     'packages: write',
     'contents: write',
+    'write-all',
     'secrets.',
   ]) {
     if (ciWorkflow.contains(token)) {
@@ -523,12 +671,15 @@ void main() {
   if (findings.isNotEmpty) {
     _fail(findings);
   }
+  final dartPlatforms = _expectedPlatforms['dart-image']!;
+  final flutterPlatforms = _expectedPlatforms['flutter-image']!;
   stdout.writeln(
     'check_image_build: OK — $dartDockerfilePath, $flutterDockerfilePath, '
     '$buildWorkflowPath and the two installers agree on Dart $dartPin / Flutter '
     '$flutterPin (Dart $flutterDartPin bundled), jaspr_cli $jasprCliPin and '
     'Tailwind $tailwindPin; the Flutter SDK comes from the sha256-pinned archive '
-    '$flutterArchive; tags $dartTag and $flutterTag.',
+    '$flutterArchive; tags $dartTag ($dartPlatforms) and '
+    '$flutterTag ($flutterPlatforms).',
   );
 }
 
@@ -643,6 +794,22 @@ bool _sameOrder(List<String> actual, List<String> expected) {
     }
   }
   return true;
+}
+
+/// Asserts that [needle] is a whole line of one job's segment — not merely a
+/// substring, and not a line in a sibling job. Job segments start at the job
+/// key, so an indentation-trimmed line comparison is exact enough here.
+void _expectJobLine(
+  List<String> findings,
+  String label,
+  String segment,
+  String needle, {
+  required String change,
+}) {
+  final lines = segment.split('\n').map((line) => line.trim());
+  if (!lines.any((line) => line == needle)) {
+    findings.add('$buildWorkflowPath: $label has no `$needle` line — $change');
+  }
 }
 
 void _expectOnce(

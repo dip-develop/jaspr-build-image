@@ -1,8 +1,11 @@
 # image: ghcr.io/dip-develop/jaspr-build-image:flutter-3.44.9-jaspr-0.23.5-tailwind-4.3.0
 #
 # Pinned Jaspr toolchain: Flutter SDK + jaspr_cli + the standalone Tailwind CSS
-# v4 CLI, multi-arch (linux/amd64 + linux/arm64). Consumer sites build FROM this
-# so their build stage never touches the 504-prone release-download endpoint.
+# v4 CLI. Consumer sites build FROM this so their build stage never touches the
+# 504-prone release-download endpoint.
+#
+# This image is amd64 only: Flutter publishes no linux-arm64 archive, so an
+# arm64 variant would be an arm64 OS carrying an x64 SDK that cannot execute.
 #
 # Two flavours exist for a real dependency reason: `build_modules` 5.x caps the
 # Dart SDK at <3.13.0, so Flutter-based Jaspr sites cannot run Dart 3.13.4, while
@@ -51,4 +54,4 @@ RUN bash /usr/local/bin/install-tailwind.sh "${TW_VERSION}" "${TARGETARCH}"
 RUN test -x /root/.pub-cache/bin/jaspr && tailwindcss --help >/dev/null
 
 LABEL org.opencontainers.image.title="jaspr-build-image" \
-      org.opencontainers.image.description="Pinned Jaspr toolchain: Dart or Flutter SDK + jaspr_cli + Tailwind CSS CLI v4 (multi-arch)"
+      org.opencontainers.image.description="Pinned Jaspr toolchain: Dart or Flutter SDK + jaspr_cli + Tailwind CSS CLI v4"

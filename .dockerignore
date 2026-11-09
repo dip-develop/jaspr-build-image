@@ -1,6 +1,6 @@
-# The build context needs scripts/ (both Dockerfiles COPY the Tailwind installer).
-# Keep this list explicit: a broad pattern here has silently dropped build inputs
-# in a sibling repo before.
+# The build context needs scripts/: both Dockerfiles COPY the Tailwind installer,
+# and the flutter one also COPYs install-flutter.sh. Keep this list explicit: a
+# broad pattern here has silently dropped build inputs in a sibling repo before.
 .git/
 .github/
 tool/

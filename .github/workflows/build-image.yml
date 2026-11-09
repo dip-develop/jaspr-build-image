@@ -67,10 +67,12 @@ jobs:
           context: .
           file: docker/flutter.Dockerfile
           push: true
-          platforms: linux/amd64,linux/arm64
-          # Keeps the OCI index to exactly the two platform manifests, so the
-          # operator's `imagetools inspect` check is unambiguous; the cost is no
-          # SLSA attestation.
+          # amd64 only: Flutter publishes no linux-arm64 archive, so an arm64
+          # variant would carry an x64 SDK that cannot execute on the base.
+          platforms: linux/amd64
+          # Keeps the OCI index to exactly the published platform manifests, so
+          # the operator's `imagetools inspect` check is unambiguous; the cost is
+          # no SLSA attestation.
           provenance: false
           # Per-job cache scope: see the dart-image job.
           cache-from: type=gha,scope=flutter

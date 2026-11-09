@@ -19,9 +19,11 @@
 # 2026-11-08 by streaming the published tarball through sha256sum.
 #
 # Note on architecture: Flutter publishes no linux/arm64 archive — the Linux
-# release manifest has a single, x64 entry — so the arm64 manifest of this image
-# carries the same x64 SDK. That is an upstream Flutter limitation for Linux,
-# not a choice made here.
+# release manifest has a single, x64 entry, and `releases_linux_arm64.json` is a
+# 404 — so the image built from this script is published `linux/amd64` only. An
+# arm64 variant would be an arm64 OS carrying this x64 SDK, and `dart` would
+# need `/lib64/ld-linux-x86-64.so.2`, which that base does not have. That is an
+# upstream Flutter limitation for Linux, not a choice made here.
 #
 # Usage: install-flutter.sh <version>
 set -eu
@@ -44,9 +46,11 @@ case "${version}" in
     ;;
 esac
 
-# xz-utils is the only package of the Flutter Linux prerequisites the official
-# `dart:` image lacks; git, curl, unzip, tar and ca-certificates are already in
-# it (checked against the image's own layer contents, not assumed).
+# xz-utils is the only Flutter Linux prerequisite this build needs and the
+# official `dart:` image lacks; git, curl, unzip, tar and ca-certificates are
+# already in it (checked against the image's own layer contents, not assumed).
+# Other Flutter prerequisites are absent too (`zip`, `libglu1-mesa`), but a web
+# build never invokes them, so they stay out of the image.
 for tool in curl git tar sha256sum; do
   command -v "${tool}" >/dev/null || {
     echo "install-flutter: ${tool} is missing from this base image" >&2
