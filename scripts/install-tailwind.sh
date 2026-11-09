@@ -5,11 +5,14 @@
 # and both image flavours (dart, flutter) call this same script, so the two
 # toolchains cannot drift.
 #
-# Why the asset API instead of /releases/download/: GitHub's release-download
-# endpoint negative-caches a 504 from its edge for ALL release assets, which is
-# why every consumer's `docker build` failed. The asset API is the working path,
-# and the sha256 below is the contract: a truncated or substituted body fails
-# loudly here instead of producing a silently different CSS binary.
+# Why the asset API instead of /releases/download/: during the outage that
+# motivated this repo (2026-11), GitHub's release-download endpoint
+# negative-cached a 504 from its own edge, in region `fra`, for ALL release
+# assets — which is why every consumer's `docker build` failed at that time.
+# The endpoint answered 200 again on 2026-11-09; the design still assumes the
+# outage can recur, so the asset API is the path used here, and the sha256 below
+# is the contract: a truncated or substituted body fails loudly here instead of
+# producing a silently different CSS binary.
 #
 # Usage: install-tailwind.sh <version> <targetarch>
 set -eu
@@ -48,9 +51,10 @@ command -v curl >/dev/null || {
   exit 1
 }
 
-# --retry covers the intermittent 5xx behind issue #250; --retry-all-errors also
-# retries a mid-body reset (curl exit 18), which plain --retry does not, so one
-# flaky transfer is not turned into a hard build failure by the sha256 guard
+# --retry covers the intermittent 5xx that `api.github.com` returns (the asset
+# API fails a request now and then during a GitHub incident); --retry-all-errors
+# also retries a mid-body reset (curl exit 18), which plain --retry does not, so
+# one flaky transfer is not turned into a hard build failure by the sha256 guard
 # below. That guard still fails hard on a truncated body, so a retry cannot hide
 # a real break.
 curl -fsSL --retry 2 --retry-delay 5 --retry-all-errors \

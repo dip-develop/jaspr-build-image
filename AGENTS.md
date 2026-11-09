@@ -2,16 +2,18 @@
 
 ## What this repo is
 
-The pin authority for two public GHCR toolchain base images,
+The pin authority for the two toolchain base images that will be published to
 `ghcr.io/dip-develop/jaspr-build-image`: a Dart flavour and a Flutter flavour,
-each carrying `jaspr_cli` plus the Tailwind CSS v4 CLI. The Dart tag is
-multi-arch (`linux/amd64` and `linux/arm64`); the Flutter tag is `linux/amd64`
-only. Their consumers are **planned**, not current: no site has been migrated
-yet — that is issue #2, one PR per repo.
+each carrying `jaspr_cli` plus the Tailwind CSS v4 CLI. **The package has never
+been built** — an anonymous pull is refused with `403` and the package page
+answers `404` — so merging to `main` is what publishes it. Once published, the
+Dart tag is multi-arch (`linux/amd64` and `linux/arm64`) and the Flutter tag is
+`linux/amd64` only. Their consumers are **planned**, not current: no site has
+been migrated yet — that is issue #2, one PR per repo.
 
-It publishes to nobody's host. There is no deploy step, no environment, no
-server and no running artifact anywhere: the only output is a package on GHCR,
-and the only job a workflow here may have is building and pushing it.
+Its only output is a package on GHCR, never a host: no deploy step, no
+environment, no server and no running artifact anywhere, and the only job a
+workflow here may have is building and pushing that package.
 
 ## Branches
 
@@ -38,7 +40,7 @@ therefore cannot run Dart 3.13.4 and stay on the Flutter line (which ships Dart
 would break every Flutter consumer. Changing that needs an owner decision, not a
 refactor.
 
-They also differ in architecture: the Dart tag is published for
+They also differ in architecture: the Dart tag will be published for
 `linux/amd64,linux/arm64`, the Flutter tag for `linux/amd64` only. Flutter
 publishes no linux-arm64 archive, so an arm64 variant would be an arm64 OS
 carrying an x64 SDK whose `dart` needs `/lib64/ld-linux-x86-64.so.2`, which that
@@ -66,7 +68,8 @@ these lists are closed:
   equality, so deleting the same line from both tails passes — a known limit);
 - `build-image.yml`'s job keys are exactly `dart-image` then `flutter-image`,
   each with its expected platforms (`linux/amd64,linux/arm64` for dart,
-  `linux/amd64` for flutter), its own `file:`, `push: true`,
+  `linux/amd64` for flutter, read from that job's `docker/build-push-action`
+  step only), its own `file:`, `push: true`,
   `provenance: false`, its own GHCR login, its own build args and its own cache
   scope; `FLUTTER_VERSION` appears only in the flutter job;
 - its publish trigger is exactly `on.push.branches: [main]`;

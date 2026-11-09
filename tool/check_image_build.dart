@@ -30,7 +30,10 @@
 /// The workflow is checked per job, not per file: platforms, tags, the
 /// `file:`, `push:`, `provenance:` and login fields, the cache scope and the
 /// build args all live inside a job segment, so a change to one job cannot be
-/// masked by the other job's copy of the same line. The expected platforms are
+/// masked by the other job's copy of the same line. `platforms:` is read from
+/// the `docker/build-push-action` step block alone — other steps take that
+/// input too (the documented `docker/setup-qemu-action` one), and that is
+/// emulation setup, not a publish platform. The expected platforms are
 /// per flavour, because the Flutter flavour publishes `linux/amd64` only: Flutter
 /// ships no `linux-arm64` archive, so an arm64 variant would be an arm64 base
 /// carrying an x64 SDK. The job set, the publish trigger, the `permissions:`
@@ -419,13 +422,25 @@ void main() {
 
     // Platforms are asserted as a whole line, not a substring: `linux/amd64` is
     // a prefix of `linux/amd64,linux/arm64`, so `contains` would accept the
-    // two-platform line where the one-platform line is expected.
-    final platforms = RegExp(
-      r'^\s*platforms:[ \t]*(.*)$',
-      multiLine: true,
-    ).allMatches(segment).map((match) => match.group(1)!.trim()).toList();
+    // two-platform line where the one-platform line is expected. The scan is
+    // scoped to the `docker/build-push-action` step: other steps take a
+    // `platforms:` input too (`docker/setup-qemu-action` documents
+    // `platforms: arm64`), and that is emulation setup, not what this job
+    // publishes.
+    final publishStep = _buildPushStep(segment);
+    final platforms = publishStep == null
+        ? const <String>[]
+        : RegExp(r'^\s*platforms:[ \t]*(.*)$', multiLine: true)
+              .allMatches(publishStep)
+              .map((match) => match.group(1)!.trim())
+              .toList();
     final expectedPlatforms = _expectedPlatforms[job]!;
-    if (platforms.length != 1 || platforms.single != expectedPlatforms) {
+    if (publishStep == null) {
+      findings.add(
+        '$buildWorkflowPath: $label has no `docker/build-push-action` step — '
+        'its `platforms:` line must read `$expectedPlatforms` inside that step',
+      );
+    } else if (platforms.length != 1 || platforms.single != expectedPlatforms) {
       findings.add(
         '$buildWorkflowPath: $label publishes [${platforms.join(' | ')}] — its '
         '`platforms:` line must read `$expectedPlatforms`',
@@ -778,6 +793,25 @@ int _firstDifferingLine(String a, String b) {
     }
   }
   return shorter + 1;
+}
+
+/// The `docker/build-push-action` step block of one job segment: from that
+/// step's `uses:` line up to the next step (`- …`) or the end of the segment.
+/// Null when the job has no such step. Used to scope the `platforms:` assertion
+/// to the step that publishes, so a `platforms:` input on another step (the
+/// documented `docker/setup-qemu-action` input, for example) cannot satisfy or
+/// corrupt it.
+String? _buildPushStep(String segment) {
+  final step = RegExp(
+    r'^[ \t]*-[ \t]*uses:[ \t]*docker/build-push-action@',
+    multiLine: true,
+  ).firstMatch(segment);
+  if (step == null) {
+    return null;
+  }
+  final rest = segment.substring(step.end);
+  final next = RegExp(r'^[ \t]*-[ \t]', multiLine: true).firstMatch(rest);
+  return next == null ? rest : rest.substring(0, next.start);
 }
 
 /// The GHA cache scope belonging to a job, derived from its name so the two

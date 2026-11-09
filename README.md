@@ -2,26 +2,36 @@
 
 ## What this is
 
-One public package on the GitHub Container Registry:
-`ghcr.io/dip-develop/jaspr-build-image`. It holds two pinned toolchain base
-images that Jaspr sites build `FROM`: the Dart flavour is multi-arch
-(`linux/amd64` and `linux/arm64`), the Flutter flavour is `linux/amd64` only.
+One package is to be published to the GitHub Container Registry:
+`ghcr.io/dip-develop/jaspr-build-image`. **It has never been built**, so an
+anonymous pull is refused with `403` and the package page answers `404`; merging
+to `main` is what publishes it (see [Operator steps](#operator-steps)). Once
+published it will hold two pinned toolchain base images that Jaspr sites build
+`FROM`: the Dart flavour is multi-arch (`linux/amd64` and `linux/arm64`), the
+Flutter flavour is `linux/amd64` only.
 
-Nothing is deployed from this repository. It publishes a toolchain image and
-nothing else — no site, no server, no host.
+Nothing is deployed from this repository. Its only output is a toolchain image
+and nothing else — no site, no server, no host.
 
 ## Why it exists
 
 GitHub's release-download endpoint
-(`github.com/<org>/<repo>/releases/download/...`) returns HTTP 504 from GitHub's
-own edge — observed in region `fra`, negative-cached across all release assets.
+(`github.com/<org>/<repo>/releases/download/...`) served `HTTP 504` from GitHub's
+own edge during the outage that motivated this repo: region `fra`,
+negative-cached across all release assets, every asset of every repository.
 Every consumer's `docker build` curled the Tailwind standalone CLI from that
-endpoint and failed; rebuilding did not help while the negative cache lived.
+endpoint and failed; rebuilding did not help while the negative cache lived. The
+endpoint answered `200` again from this machine on 2026-11-09 — the trigger was
+that outage, not a permanent property of the endpoint, and the design assumes it
+can recur.
 
 The download now happens once, at image-build time, into a cached GHCR layer,
 and the body is verified against a pinned sha256 before it is installed.
 
 ## The two tags
+
+Neither tag exists on GHCR yet — the first publish happens when the PR that adds
+this repo merges. Once published:
 
 | Tag | Base | Contents | Architectures | Planned consumers |
 |---|---|---|---|---|
@@ -38,10 +48,10 @@ The two flavours cannot be merged. `build_modules` 5.x caps the Dart SDK at
 the Flutter line; a Dart-only site has no use for the Flutter SDK, which would
 add gigabytes to every build for nothing.
 
-They also differ in architecture. The Dart tag is published for `linux/amd64`
-and `linux/arm64`; the Flutter tag is `linux/amd64` only, because Flutter
-publishes no `linux-arm64` archive. Neither tag name encodes the architecture,
-so the tag strings stay exactly as they are.
+They also differ in architecture. The Dart tag will be published for
+`linux/amd64` and `linux/arm64`; the Flutter tag for `linux/amd64` only, because
+Flutter publishes no `linux-arm64` archive. Neither tag name encodes the
+architecture, so the tag strings stay exactly as they are.
 
 ### Why the Flutter tag is amd64-only
 
@@ -49,9 +59,9 @@ Flutter publishes no Linux archive for arm64: its Linux release manifest lists
 749 releases and not one `arm*` artifact, and `releases_linux_arm64.json`
 answers 404. An arm64 variant of this image would be an arm64 OS carrying an x64
 SDK whose `dart` needs `/lib64/ld-linux-x86-64.so.2`, which the arm64 base does
-not contain — a guaranteed failing `RUN`. The job therefore publishes
+not contain — a guaranteed failing `RUN`. The job will therefore publish
 `linux/amd64` alone: nothing is emulated and nothing pretends to be arm64. The
-Dart tag stays native on both architectures.
+Dart tag will stay native on both architectures.
 
 ### Where the Flutter SDK comes from
 
@@ -69,6 +79,8 @@ stale tag — Google's release manifest plus a sha256 is a pin, a mirror that la
 is not.
 
 ## Using it
+
+Once the package is published, a consumer builds `FROM` it:
 
 ```dockerfile
 FROM ghcr.io/dip-develop/jaspr-build-image:dart-3.13.4-jaspr-0.23.5-tailwind-4.3.0 AS build
@@ -135,8 +147,10 @@ down (a file-vs-file equality, so deleting the same line from both tails would
 pass — a known, accepted limit, since the per-pin assertions are what catch a
 pin); `build-image.yml` has exactly the jobs `dart-image` and `flutter-image` in
 that order, each publishing its own expected platforms
-(`linux/amd64,linux/arm64` for the Dart tag, `linux/amd64` for the Flutter tag),
-building its own `file:`, with `push: true`, `provenance: false`, its own GHCR
+(`linux/amd64,linux/arm64` for the Dart tag, `linux/amd64` for the Flutter tag —
+read from that job's `docker/build-push-action` step, so a `platforms:` input on
+another step such as `setup-qemu-action` is not mistaken for it), building its
+own `file:`, with `push: true`, `provenance: false`, its own GHCR
 login and its own build args; its `permissions:` block grants only
 `contents: read` and `packages: write`; its only secret is `GITHUB_TOKEN`; it
 publishes only on `push: main`; and `ci.yml` stays read-only with one job that
@@ -151,16 +165,40 @@ triggers on `pull_request`.
 3. Set the package visibility to **PUBLIC**: Settings → Packages →
    `jaspr-build-image` → Change visibility. Both cross-org consumers will pull
    anonymously, so a private package breaks them.
-4. Verify each tag against its own expected platforms, **anonymously**:
+4. Verify each tag **anonymously**, reading the raw manifest — the two tags do
+   not have the same shape:
 
    ```bash
    docker logout ghcr.io
-   docker buildx imagetools inspect ghcr.io/dip-develop/jaspr-build-image:<tag>
+   docker buildx imagetools inspect --raw \
+     ghcr.io/dip-develop/jaspr-build-image:<tag> | jq -r .mediaType
    ```
 
-   the Dart tag must show `linux/amd64` **and** `linux/arm64`, the Flutter tag
-   `linux/amd64` only (a second platform on it would be a lie). Logging out
-   first is the point: `imagetools inspect` uses the caller's stored
+   - **Dart tag** → `application/vnd.oci.image.index.v1+json`, and its
+     `.manifests` array has exactly **two** entries:
+
+     ```bash
+     docker buildx imagetools inspect --raw \
+       ghcr.io/dip-develop/jaspr-build-image:dart-3.13.4-jaspr-0.23.5-tailwind-4.3.0 \
+       | jq -r '.manifests[].platform | "\(.os)/\(.architecture)"'
+     ```
+
+   - **Flutter tag** → `application/vnd.oci.image.manifest.v1+json` with **no**
+     `.manifests` at all: one platform plus `provenance: false` is pushed as a
+     plain OCI manifest, not an index. Its one platform comes from the image
+     config:
+
+     ```bash
+     docker buildx imagetools inspect \
+       --format '{{.Image.OS}}/{{.Image.Architecture}}' \
+       ghcr.io/dip-develop/jaspr-build-image:flutter-3.44.9-jaspr-0.23.5-tailwind-4.3.0
+     ```
+
+     That must print `linux/amd64`. A plain `imagetools inspect` on this tag
+     prints only Name, MediaType and Digest — **no platform list** — and that is
+     correct, not a failure. A second platform here would be a lie.
+
+   Logging out first is the point: `imagetools inspect` uses the caller's stored
    credentials, so it succeeds on a package that is still private and the check
    would prove nothing. The credential-free equivalent is the anonymous-token
    probe —
